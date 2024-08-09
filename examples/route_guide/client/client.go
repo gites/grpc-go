@@ -123,7 +123,7 @@ func runRouteChat(client pb.RouteGuideClient) {
 	// 	{Location: &pb.Point{Latitude: 0, Longitude: 2}, Message: "Fifth message"},
 	// 	{Location: &pb.Point{Latitude: 0, Longitude: 3}, Message: "Sixth message"},
 	// }
-
+	var count int32
 	ctx := context.Background()
 
 	stream, err := client.RouteChat(ctx)
@@ -140,8 +140,8 @@ func runRouteChat(client pb.RouteGuideClient) {
 				return
 			}
 			if err != nil {
-				log.Printf("client.RouteChat failed2: %v", err)
-				log.Printf("Got message size %dkb at point(%d, %d)", len(in.Message)/1024, in.Location.Latitude, in.Location.Longitude)
+				log.Printf("last message count: %d", count)
+				log.Fatalf("client.RouteChat failed2: %v", err)
 			}
 			// log.Printf("Got message %s at point(%d, %d)", in.Message, in.Location.Latitude, in.Location.Longitude)
 			// log.Printf("Got message size %vkb", in)
@@ -149,7 +149,7 @@ func runRouteChat(client pb.RouteGuideClient) {
 		}
 	}()
 	// for _, note := range notes
-	var count int32
+
 	note := &pb.RouteNote{Location: &pb.Point{Latitude: 0, Longitude: count}, Message: notesData}
 	for {
 		if count == 2147483640 {
