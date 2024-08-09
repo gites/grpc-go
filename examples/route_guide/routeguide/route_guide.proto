@@ -50,6 +50,7 @@ service RouteGuide {
   // Accepts a stream of RouteNotes sent while a route is being traversed,
   // while receiving other RouteNotes (e.g. from other users).
   rpc RouteChat(stream RouteNote) returns (stream RouteNote) {}
+
 }
 
 // Points are represented as latitude-longitude pairs in the E7 representation
@@ -108,4 +109,31 @@ message RouteSummary {
 
   // The duration of the traversal in seconds.
   int32 elapsed_time = 4;
+}
+
+// Traefik test
+enum Status {
+  SUCCESS = 0;
+  FAILURE = 1;
+  SYNC_ALREADY_IN_PROGRESS = 2;
+}
+
+message Response {
+  Status status = 1;          // Indicating success or failure
+  string error_message = 2;   // Indicating success or failure
+}
+
+enum Operation {
+  ADD_OR_UPDATE = 0;  // Add/Update operation
+  DELETE = 1;         // Delete operation
+}
+
+message Roster {
+  Operation operation = 1;          // either Add/Update or Delete
+  string organization_id_idms = 2;  // ID
+  string source_id = 3;             // The source id returned by sync source creation request
+  string sync_id = 4;               // The ID of the Sync this roster belongs to
+  string example1_id = 5;           // The class ID at the data source
+  string example2_id = 6;           // The student ID at the data source
+  string roster_id = 7;             // The roster ID at the data source
 }

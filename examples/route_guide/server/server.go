@@ -41,6 +41,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	pb "google.golang.org/grpc/examples/route_guide/routeguide"
+	"google.golang.org/grpc/reflection"
 )
 
 var (
@@ -48,7 +49,7 @@ var (
 	certFile   = flag.String("cert_file", "", "The TLS cert file")
 	keyFile    = flag.String("key_file", "", "The TLS key file")
 	jsonDBFile = flag.String("json_db_file", "", "A json file containing a list of features")
-	port       = flag.Int("port", 50051, "The server port")
+	port       = flag.Int("port", 9443, "The server port")
 )
 
 type routeGuideServer struct {
@@ -121,6 +122,7 @@ func (s *routeGuideServer) RecordRoute(stream pb.RouteGuide_RecordRouteServer) e
 // RouteChat receives a stream of message/location pairs, and responds with a stream of all
 // previous messages at each of those locations.
 func (s *routeGuideServer) RouteChat(stream pb.RouteGuide_RouteChatServer) error {
+	count := 0
 	for {
 		in, err := stream.Recv()
 		if err == io.EOF {
@@ -129,21 +131,27 @@ func (s *routeGuideServer) RouteChat(stream pb.RouteGuide_RouteChatServer) error
 		if err != nil {
 			return err
 		}
-		key := serialize(in.Location)
+		// key := serialize(in.Location)
+		count = count + 1
+		// send a response every 1k messages
+		if count%1000 == 0 {
+			// s.mu.Lock()
+			// s.routeNotes[key] = append(s.routeNotes[key], in)
+			// // Note: this copy prevents blocking other clients while serving this one.
+			// // We don't need to do a deep copy, because elements in the slice are
+			// // insert-only and never modified.
+			// rn := make([]*pb.RouteNote, len(s.routeNotes[key]))
+			// copy(rn, s.routeNotes[key])
+			// s.mu.Unlock()
 
-		s.mu.Lock()
-		s.routeNotes[key] = append(s.routeNotes[key], in)
-		// Note: this copy prevents blocking other clients while serving this one.
-		// We don't need to do a deep copy, because elements in the slice are
-		// insert-only and never modified.
-		rn := make([]*pb.RouteNote, len(s.routeNotes[key]))
-		copy(rn, s.routeNotes[key])
-		s.mu.Unlock()
-
-		for _, note := range rn {
-			if err := stream.Send(note); err != nil {
+			// for _, note := range rn {
+			log.Printf("Sending message size %dkb at point(%d, %d)", len(in.Message)/1024, in.Location.Latitude, in.Location.Longitude)
+			if err := stream.Send(in); err != nil {
+				log.Printf("server.RouteChat failed1: %v", err)
 				return err
 			}
+			// }
+			// delete(s.routeNotes, key)
 		}
 	}
 }
@@ -217,7 +225,7 @@ func newServer() *routeGuideServer {
 
 func main() {
 	flag.Parse()
-	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", *port))
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
@@ -237,6 +245,8 @@ func main() {
 	}
 	grpcServer := grpc.NewServer(opts...)
 	pb.RegisterRouteGuideServer(grpcServer, newServer())
+	// Register reflection service on gRPC server.
+	reflection.Register(grpcServer)
 	grpcServer.Serve(lis)
 }
 

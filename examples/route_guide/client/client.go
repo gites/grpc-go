@@ -24,10 +24,13 @@ package main
 
 import (
 	"context"
+	cryptoTLS "crypto/tls"
+	"crypto/x509"
 	"flag"
 	"io"
 	"log"
 	"math/rand"
+	"os"
 	"time"
 
 	"google.golang.org/grpc"
@@ -40,8 +43,12 @@ import (
 var (
 	tls                = flag.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
 	caFile             = flag.String("ca_file", "", "The file containing the CA root cert file")
-	serverAddr         = flag.String("addr", "localhost:50051", "The server address in the format of host:port")
+	certFile           = flag.String("cert_file", "", "The file containing the TLS cert")
+	keyFile            = flag.String("key_file", "", "The file containing the TLS key")
+	serverAddr         = flag.String("addr", "localhost:9443", "The server address in the format of host:port")
 	serverHostOverride = flag.String("server_host_override", "x.test.example.com", "The server name used to verify the hostname returned by the TLS handshake")
+	dataFile           = flag.String("data", "", "Path to data file")
+	notesData          string
 )
 
 // printFeature gets the feature for the given point.
@@ -108,19 +115,20 @@ func runRecordRoute(client pb.RouteGuideClient) {
 
 // runRouteChat receives a sequence of route notes, while sending notes for various locations.
 func runRouteChat(client pb.RouteGuideClient) {
-	notes := []*pb.RouteNote{
-		{Location: &pb.Point{Latitude: 0, Longitude: 1}, Message: "First message"},
-		{Location: &pb.Point{Latitude: 0, Longitude: 2}, Message: "Second message"},
-		{Location: &pb.Point{Latitude: 0, Longitude: 3}, Message: "Third message"},
-		{Location: &pb.Point{Latitude: 0, Longitude: 1}, Message: "Fourth message"},
-		{Location: &pb.Point{Latitude: 0, Longitude: 2}, Message: "Fifth message"},
-		{Location: &pb.Point{Latitude: 0, Longitude: 3}, Message: "Sixth message"},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	// notes := []*pb.RouteNote{
+	// 	{Location: &pb.Point{Latitude: 0, Longitude: 1}, Message: "First message"},
+	// 	{Location: &pb.Point{Latitude: 0, Longitude: 2}, Message: "Second message"},
+	// 	{Location: &pb.Point{Latitude: 0, Longitude: 3}, Message: "Third message"},
+	// 	{Location: &pb.Point{Latitude: 0, Longitude: 1}, Message: "Fourth message"},
+	// 	{Location: &pb.Point{Latitude: 0, Longitude: 2}, Message: "Fifth message"},
+	// 	{Location: &pb.Point{Latitude: 0, Longitude: 3}, Message: "Sixth message"},
+	// }
+
+	ctx := context.Background()
+
 	stream, err := client.RouteChat(ctx)
 	if err != nil {
-		log.Fatalf("client.RouteChat failed: %v", err)
+		log.Fatalf("client.RouteChat failed1: %v", err)
 	}
 	waitc := make(chan struct{})
 	go func() {
@@ -132,17 +140,31 @@ func runRouteChat(client pb.RouteGuideClient) {
 				return
 			}
 			if err != nil {
-				log.Fatalf("client.RouteChat failed: %v", err)
+				log.Printf("client.RouteChat failed2: %v", err)
+				log.Printf("Got message size %dkb at point(%d, %d)", len(in.Message)/1024, in.Location.Latitude, in.Location.Longitude)
 			}
-			log.Printf("Got message %s at point(%d, %d)", in.Message, in.Location.Latitude, in.Location.Longitude)
+			// log.Printf("Got message %s at point(%d, %d)", in.Message, in.Location.Latitude, in.Location.Longitude)
+			// log.Printf("Got message size %vkb", in)
+			log.Printf("Got message size %dkb at point(%d, %d)", len(in.Message)/1024, in.Location.Latitude, in.Location.Longitude)
 		}
 	}()
-	for _, note := range notes {
-		if err := stream.Send(note); err != nil {
-			log.Fatalf("client.RouteChat: stream.Send(%v) failed: %v", note, err)
+	// for _, note := range notes
+	var count int32
+	note := &pb.RouteNote{Location: &pb.Point{Latitude: 0, Longitude: count}, Message: notesData}
+	for {
+		if count == 2147483640 {
+			note.Location.Latitude = note.Location.Latitude + 1
+			count = 0
 		}
+		count = count + 1
+		note.Location.Longitude = count
+		if err := stream.Send(note); err != nil {
+			stream.CloseSend()
+			log.Fatalf("client.RouteChat: stream.Send(%v) failed3: %v", note, err)
+
+		}
+		// time.Sleep(1 * time.Millisecond)
 	}
-	stream.CloseSend()
 	<-waitc
 }
 
@@ -159,15 +181,62 @@ func main() {
 		if *caFile == "" {
 			*caFile = data.Path("x509/ca_cert.pem")
 		}
-		creds, err := credentials.NewClientTLSFromFile(*caFile, *serverHostOverride)
+		if *certFile == "" {
+			*certFile = data.Path("x509/cert.pem")
+		}
+		if *keyFile == "" {
+			*keyFile = data.Path("x509/key.pem")
+		}
+		cert, err := cryptoTLS.LoadX509KeyPair(*certFile, *keyFile)
 		if err != nil {
-			log.Fatalf("Failed to create TLS credentials: %v", err)
+			log.Fatal(err)
+		}
+		rootPEMfile, err := os.Open(data.Path(*caFile))
+		if err != nil {
+			log.Fatal(err)
+		}
+		rootPEM, err := io.ReadAll(rootPEMfile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		roots := x509.NewCertPool()
+		ok := roots.AppendCertsFromPEM([]byte(rootPEM))
+		if !ok {
+			log.Fatal(err)
+		}
+		cfg := &cryptoTLS.Config{
+			Certificates: []cryptoTLS.Certificate{cert},
+			RootCAs:      roots,
+			ClientCAs:    roots,
+		}
+		// creds, err := credentials.NewClientTLSFromFile(*caFile, *serverHostOverride)
+		// if err != nil {
+		// 	log.Fatalf("Failed to create TLS credentials: %v", err)
+		// }
+		creds := credentials.NewTLS(cfg)
+		if *serverHostOverride != "" {
+			creds.OverrideServerName(*serverHostOverride)
 		}
 		opts = append(opts, grpc.WithTransportCredentials(creds))
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 
+	if *dataFile != "" {
+		file, err := os.Open(data.Path(*dataFile))
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer func() {
+			if err = file.Close(); err != nil {
+				log.Fatal(err)
+			}
+		}()
+
+		b, err := io.ReadAll(file)
+		// fmt.Print(b)
+		notesData = string(b)
+	}
 	conn, err := grpc.NewClient(*serverAddr, opts...)
 	if err != nil {
 		log.Fatalf("fail to dial: %v", err)
@@ -175,20 +244,20 @@ func main() {
 	defer conn.Close()
 	client := pb.NewRouteGuideClient(conn)
 
-	// Looking for a valid feature
-	printFeature(client, &pb.Point{Latitude: 409146138, Longitude: -746188906})
+	// // Looking for a valid feature
+	// printFeature(client, &pb.Point{Latitude: 409146138, Longitude: -746188906})
 
-	// Feature missing.
-	printFeature(client, &pb.Point{Latitude: 0, Longitude: 0})
+	// // Feature missing.
+	// printFeature(client, &pb.Point{Latitude: 0, Longitude: 0})
 
-	// Looking for features between 40, -75 and 42, -73.
-	printFeatures(client, &pb.Rectangle{
-		Lo: &pb.Point{Latitude: 400000000, Longitude: -750000000},
-		Hi: &pb.Point{Latitude: 420000000, Longitude: -730000000},
-	})
+	// // Looking for features between 40, -75 and 42, -73.
+	// printFeatures(client, &pb.Rectangle{
+	// 	Lo: &pb.Point{Latitude: 400000000, Longitude: -750000000},
+	// 	Hi: &pb.Point{Latitude: 420000000, Longitude: -730000000},
+	// })
 
-	// RecordRoute
-	runRecordRoute(client)
+	// // RecordRoute
+	// runRecordRoute(client)
 
 	// RouteChat
 	runRouteChat(client)
