@@ -1,0 +1,33 @@
+services:
+ 
+  traefik:
+    container_name: traefik
+    restart: always
+    image: "traefik:3.1.4"
+    command: --api.insecure=true --providers.docker --accesslog=true --log.format=common --log.level=DEBUG
+    ports:
+      - 80:80
+      - 8080:8080
+      - 9090:9090
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  whoami:
+    image: traefik/whoami
+    labels:
+      - "traefik.http.routers.whoami.rule=Host(`whoami.docker.localhost`)"
+
+  server:
+    image: gites/grpc-stream:test1
+    labels:
+      - "traefik.http.routers.server.rule=PathPrefix(`/routeguide.RouteGuide/`)"
+      - "traefik.http.middlewares.autodetect.contenttype=true"
+      - "traefik.http.services.server.loadbalancer.server.port=8081"
+      - "traefik.http.services.server.loadbalancer.server.scheme=h2c"
+    command: /server -port 8081
+    ports:
+      - 8081:8081
+
+  client:
+    image: gites/grpc-stream:test1
+    command: /bin/sh -c "while :; do /client -addr traefik:80 -data /data.txt; sleep 1; echo "------------"; done"
